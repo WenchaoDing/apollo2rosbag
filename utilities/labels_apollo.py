@@ -4,8 +4,7 @@
 """ Zpark labels"""
 
 from collections import namedtuple
-
-
+import pickle
 #--------------------------------------------------------------------------------
 # Definitions
 #--------------------------------------------------------------------------------
@@ -180,7 +179,7 @@ if __name__ == "__main__":
     print("Example usages:")
 
     # Map from name to label
-    name = '机动车'
+    name = 'car'
     id   = name2label[name].id
     print("ID of label '{name}': {id}".format(name=name, id=id))
 
@@ -192,3 +191,7 @@ if __name__ == "__main__":
     trainId = 0
     name = trainId2label[trainId].name
     print("Name of label with trainID '{id}': {name}".format(id=trainId, name=name))
+
+    #pickle.dump(name2label, open('./labels.pickle', 'wb'), protocol=2)
+    pickle.dump([name2label, id2label, trainId2label, category2labels, color2label], open('./labels.pickle', 'wb'))
+
