@@ -19,13 +19,14 @@ from utilities.labels_apollo import Label
 dataset_dir = '/media/denny/storage/dataset/apolloscape/'
 scene       = 'road02'
 level       = 'ins'
-camera      = '/Camera 5/'
+cameras     = ['/Camera 5/'] 
+#cameras     = ['/Camera 5/', '/Camera 6/'] 
 label_path  = './utilities/labels.pickle'
 
 print ('***** reading dataset from dir: ', dataset_dir)
 print ('***** reading scene: ', scene)
 print ('***** level: ', level)
-print ('***** using camera: ', camera)
+print ('***** using camera: ', cameras)
 max_record_id = 100
 
 def get_filenames_from_dir(colorimg_dir):
@@ -47,7 +48,7 @@ print (available_recordids)
 
 #visualize sequentially
 #cv2.namedWindow('three_in_one', cv2.WINDOW_NORMAL)
-vis_resize_coeff = 0.1
+vis_resize_coeff = 0.07
 user_interupt = False
 
 if (os.path.exists(label_path)):
@@ -83,91 +84,126 @@ def convert_label_class_to_colormap(label_image):
 
   return colormap
 
-for record_id in available_recordids:
+
+def read_image(recordname, prefix, pendix, cameras):
+  #read color image from dataset/scene/level/record/cameras
+  img_list = []
+  #iterate throught all the cameras
+  for camera in cameras:
+    #overwrite camera name
+    camerastr = list(camera)
+    recordstr = list(recordname)
+    recordstr[-1] = camerastr[-2]
+    recordname = ''.join(recordstr) 
+
+    #generate name
+    imagename = prefix + camera + recordname + pendix
+
+    #use opencv to get the image
+    img = cv2.imread(imagename)
+    if img is not None:
+      img_list.append(img)
+    # else:
+    #   print ('ERROR: Cannot read image:', imagename)
+
+  return img_list
+
+
+def read_label_image(recordname, prefix, cameras):
+  labelimg_list = []
+
+  for camera in cameras:
+    camerastr = list(camera)
+    recordstr = list(recordname)
+    recordstr[-1] = camerastr[-2]
+    recordname = ''.join(recordstr) 
+
+    #generate name
+    labelimg_name = prefix + camera + recordname + '.png'
+
+    #use opencv to get the image
+    labelimg = cv2.imread(labelimg_name)
+    if labelimg is not None:
+      labelimg_list.append(labelimg)
+    else:
+      #there are two different naming conventions
+      labelimg_name = prefix + camera + recordname + '_bin.png'
+      labelimg = cv2.imread(labelimg_name)
+      if labelimg is not None:
+        labelimg_list.append(labelimg)
+#      else:
+        #print ('ERROR: Cannot read label image:', labelimg_name)
+  return labelimg_list
+
+
+for record_id in available_recordids[2:]:
+  #get record folder name
   print ('>>>>>> Current record: ', record_id)
-
   record_string = 'Record' + '{0:03}'.format(record_id)
-  colorimg_dir = dataset_dir + scene + '_' + level + '/ColorImage/' + record_string + camera
-  label_dir    = dataset_dir + scene + '_' + level + '/Label/'      + record_string + camera
-  depth_dir    = dataset_dir + scene + '_' + 'depth/'               + record_string + camera
-  pose_dir     = dataset_dir + scene + '_' + level + '/Pose/'       + record_string + camera
 
+  #use arbitrary camera name to get all the colorimg_names
+  colorimg_dir = dataset_dir + scene + '_' + level + '/ColorImage/' + record_string + cameras[0]
   colorimg_names = get_filenames_from_dir(colorimg_dir)
-  poses_name     = pose_dir + 'pose.txt'
-
-  pose_df = pd.read_csv(poses_name, delimiter =' ', header = None, names=['r00', 'r01', 'r02', 't0', 'r10', 'r11', 'r12', 't1', 'r20', 'r21', 'r22', 't2', 'p40', 'p41', 'p42', 'p43', 'image_name'])
-  pose_df.set_index('image_name')
-
-  print (pose_df)
-
+  
+  #collect all the records names
+  records_list = []
   for colorimg_name in colorimg_names:
-    image_list     = [] #original images 
-    vis_image_list = [] #images for visualization
+    recordname   = os.path.splitext(os.path.basename(colorimg_name))[0]
+    records_list.append(recordname) 
 
-    colorimg = cv2.imread(colorimg_name)
-    if colorimg is not None:
-      resized_color = cv2.resize(colorimg, (0,0), fx=vis_resize_coeff, fy=vis_resize_coeff) 
-      image_list.append(colorimg)
-      vis_image_list.append(resized_color)
-    else:
-      print ('ERROR: Cannot read color image:', colorimg_name)
+  #get pose records
+  pose_dfs = []
+  for camera in cameras:
+    pose_dir   = dataset_dir + scene + '_' + level + '/Pose/' + record_string + camera
+    poses_name = pose_dir + 'pose.txt' 
 
-    #get file name
-    recordname = os.path.splitext(os.path.basename(colorimg_name))[0]
+    pose_df = pd.read_csv(poses_name, delimiter =' ', header = None, names=['r00', 'r01', 'r02', 't0', 'r10', 'r11', 'r12', 't1', 'r20', 'r21', 'r22', 't2', 'p40', 'p41', 'p42', 'p43', 'image_name'])
+    pose_df.set_index('image_name')
+    pose_dfs.append(pose_df)
+  
+  print('Finish reading all the posed for this record.', len(pose_dfs) )
+
+  #iterate through records
+  for recordname in records_list:
+    img_list = []
+
+    #read color image
+    colorprefix = dataset_dir + scene + '_' + level + '/ColorImage/' + record_string
+    colorimg_list = read_image(recordname, colorprefix, '.jpg', cameras)
+    img_list += colorimg_list
+
+    #read labels 
+    labelprefix = dataset_dir + scene + '_' + level + '/Label/' + record_string
+    labelimg_list = read_label_image(recordname, labelprefix, cameras)
+    img_list += labelimg_list 
+
+    #read depth
+    depthprefix = dataset_dir + scene + '_' + level + '_depth/' + record_string
+    depthimg_list = read_image(recordname, depthprefix, '.png', cameras)
+    img_list += depthimg_list
+
+    #read pose
+    poses = []
+    for pose_df in pose_dfs:
+      select_pose = pose_df[pose_df['image_name'].str.contains(recordname)]
+      pose_tuple  = (select_pose['t0'].values[0], select_pose['t1'].values[0], select_pose['t2'].values[0])
+      poses.append(pose_tuple)
+
+    #resize and visualize
+    vis_img = None
+    for img in img_list:
+      resized = cv2.resize(img, (0,0), fx=vis_resize_coeff, fy=vis_resize_coeff) 
+      if vis_img is not None:
+        vis_img = np.concatenate((vis_img, resized), axis=1)
+      else:
+        vis_img = resized
     
-    #get corresponding segmentation image
-    binlabelimg_name = label_dir + recordname + '_bin.png'
-    binimg = cv2.imread(binlabelimg_name)
-
-    if binimg is not None:
-      resized_bin = cv2.resize(binimg, (0,0), fx=vis_resize_coeff, fy=vis_resize_coeff) 
-      #color_bin = convert_label_class_to_colormap(resized_bin)
-      image_list.append(binimg)
-      vis_image_list.append(resized_bin)
-    else:
-      print ('ERROR: Cannot find bin for:', recordname)
-
-    #get depth image
-    depthimg = cv2.imread(depth_dir+recordname + '.png')
-    if depthimg is not None:
-      resized_depth = cv2.resize(depthimg, (0,0), fx=vis_resize_coeff, fy=vis_resize_coeff) 
-      image_list.append(depthimg)
-      vis_image_list.append(resized_depth)
-    else:
-      print ('ERROR: Cannot find depth for:', depth_dir + recordname)
-    
-    #get instance image and polygons (if any)
-    inslabelimg_name = label_dir + recordname + '_instanceIds.png'
-    insimg = cv2.imread(inslabelimg_name)
-    if insimg is not None:
-      resized_ins = cv2.resize(insimg, (0,0), fx=vis_resize_coeff, fy=vis_resize_coeff) 
-      image_list.append(insimg)
-      vis_image_list.append(resized_ins)
-    else:
-      print ('No instance', inslabelimg_name)
-
-    #get pose of this image
-    #pose = pose_df[pose_df[:,16] == recordname]
-    select_pose = pose_df[pose_df['image_name'].str.contains(recordname)]
-    print (select_pose['t0'].values[0], select_pose['t1'].values[0], select_pose['t2'].values[0])
-
-    # concatenate visualization image
-    vis_img = vis_image_list[0]
-    for i in range(1, len(vis_image_list)):
-      vis_img = np.concatenate((vis_img, vis_image_list[i]), axis=1)
-
-    cv2.imshow('three_in_one', vis_img)
+    cv2.imshow('all in one', vis_img)
     k = cv2.waitKey(1)
 
-    if k == 27: #wait for ESC key to exit
-      cv2.destroyAllWindows()
+    if k == 27:
       user_interupt = True
-      break;
-
+      break
 
   if user_interupt:
-    break;
-
-
-
-
+    break
