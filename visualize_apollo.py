@@ -4,7 +4,7 @@
 #for reading images and proces image
 from __future__ import print_function
 
-#for filename retrieve
+#for recordname retrieve
 import glob
 #for visualization
 import cv2
@@ -12,6 +12,7 @@ import cv2
 import os
 import numpy as np
 import pickle
+import pandas as pd
 #apollo official utils for label
 from utilities.labels_apollo import Label
 
@@ -68,12 +69,14 @@ def convert_label_class_to_colormap(label_image):
       if pixel_id not in id2label.keys():
         pixel_id = 255
 
+      #calculate colorcode for this label
       label = id2label[pixel_id]
       colorcode = label.color
-      r =  colorcode // (256*256)
+      r = colorcode // (256*256)
       g = (colorcode-256*256*r) // 256
       b = (colorcode-256*256*r-256*g)
-
+      
+      #opencv use bgr
       colormap[u,v,0] = b
       colormap[u,v,1] = g
       colormap[u,v,2] = r
@@ -85,10 +88,17 @@ for record_id in available_recordids:
 
   record_string = 'Record' + '{0:03}'.format(record_id)
   colorimg_dir = dataset_dir + scene + '_' + level + '/ColorImage/' + record_string + camera
-  label_dir    = dataset_dir + scene + '_' + level + '/Label/' + record_string + camera
-  depth_dir    = dataset_dir + scene + '_' + 'depth/' + record_string + camera
+  label_dir    = dataset_dir + scene + '_' + level + '/Label/'      + record_string + camera
+  depth_dir    = dataset_dir + scene + '_' + 'depth/'               + record_string + camera
+  pose_dir     = dataset_dir + scene + '_' + level + '/Pose/'       + record_string + camera
 
   colorimg_names = get_filenames_from_dir(colorimg_dir)
+  poses_name     = pose_dir + 'pose.txt'
+
+  pose_df = pd.read_csv(poses_name, delimiter =' ', header = None, names=['r00', 'r01', 'r02', 't0', 'r10', 'r11', 'r12', 't1', 'r20', 'r21', 'r22', 't2', 'p40', 'p41', 'p42', 'p43', 'image_name'])
+  pose_df.set_index('image_name')
+
+  print (pose_df)
 
   for colorimg_name in colorimg_names:
     image_list     = [] #original images 
@@ -103,10 +113,10 @@ for record_id in available_recordids:
       print ('ERROR: Cannot read color image:', colorimg_name)
 
     #get file name
-    filename = os.path.splitext(os.path.basename(colorimg_name))[0]
+    recordname = os.path.splitext(os.path.basename(colorimg_name))[0]
     
     #get corresponding segmentation image
-    binlabelimg_name = label_dir + filename + '_bin.png'
+    binlabelimg_name = label_dir + recordname + '_bin.png'
     binimg = cv2.imread(binlabelimg_name)
 
     if binimg is not None:
@@ -115,19 +125,19 @@ for record_id in available_recordids:
       image_list.append(binimg)
       vis_image_list.append(resized_bin)
     else:
-      print ('ERROR: Cannot find bin for:', filename)
+      print ('ERROR: Cannot find bin for:', recordname)
 
     #get depth image
-    depthimg = cv2.imread(depth_dir+filename + '.png')
+    depthimg = cv2.imread(depth_dir+recordname + '.png')
     if depthimg is not None:
       resized_depth = cv2.resize(depthimg, (0,0), fx=vis_resize_coeff, fy=vis_resize_coeff) 
       image_list.append(depthimg)
       vis_image_list.append(resized_depth)
     else:
-      print ('ERROR: Cannot find depth for:', depth_dir + filename)
+      print ('ERROR: Cannot find depth for:', depth_dir + recordname)
     
     #get instance image and polygons (if any)
-    inslabelimg_name = label_dir + filename + '_instanceIds.png'
+    inslabelimg_name = label_dir + recordname + '_instanceIds.png'
     insimg = cv2.imread(inslabelimg_name)
     if insimg is not None:
       resized_ins = cv2.resize(insimg, (0,0), fx=vis_resize_coeff, fy=vis_resize_coeff) 
@@ -135,8 +145,11 @@ for record_id in available_recordids:
       vis_image_list.append(resized_ins)
     else:
       print ('No instance', inslabelimg_name)
-    #get pose of this image
 
+    #get pose of this image
+    #pose = pose_df[pose_df[:,16] == recordname]
+    select_pose = pose_df[pose_df['image_name'].str.contains(recordname)]
+    print (select_pose['t0'].values[0], select_pose['t1'].values[0], select_pose['t2'].values[0])
 
     # concatenate visualization image
     vis_img = vis_image_list[0]
