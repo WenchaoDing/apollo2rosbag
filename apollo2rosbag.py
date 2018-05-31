@@ -14,6 +14,7 @@ import numpy as np
 import pickle
 import pandas as pd
 import random
+from math import sqrt
 #apollo official utils for label
 from utilities.labels_apollo import Label
 
@@ -21,15 +22,12 @@ from utilities.labels_apollo import Label
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-#record to rosbag
+#import ros utils
 import rosbag
 import rospy
-from pyquaternion import Quaternion
-from std_msgs.msg import Int32, String
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import CameraInfo
 from nav_msgs.msg import Odometry
-from math import sqrt
 
 
 def convert_label_class_to_colormap(label_image):
@@ -84,7 +82,6 @@ def get_timestamp_from_recordname(recordname, correction = 0.0):
   stamp  = rospy.Time.from_sec(int(splits[1])/1000. - correction)
   return stamp
 
-
 def get_pose_tuple(pose_df, recordname):
   pose_tuple = None
   #search with some tolerence in stamp
@@ -97,7 +94,6 @@ def get_pose_tuple(pose_df, recordname):
       break
 
   return pose_tuple
-
 
 def read_image(recordname, prefix, pendix, cameras, flags = cv2.IMREAD_COLOR):
   #read color image from dataset/scene/level/record/cameras
@@ -128,14 +124,12 @@ def record_next_bag(scene, level, record_id, bag_index_this_record):
   bagname = 'bags/' + scene + '_' + level + '_record' + str(record_id) + '_part' + str(bag_index_this_record) + '.bag'
   bag     = rosbag.Bag(bagname, 'w')
   bag_index_this_record += 1 
-
   return bag, bag_index_this_record
 
 def merge_two_dicts(x, y):
   z = x.copy()   # start with x's keys and values
   z.update(y)    # modifies z with y's keys and values & returns None
   return z
-
 
 def trace_method(matrix):
   """
@@ -167,16 +161,6 @@ def trace_method(matrix):
   return q
 
 def pose_to_rosmsg(extrinsic, intrinsic, h, w):
-  #generate camera info msg based on camera extrinsic and intrinsic
-  # Intrinsic camera matrix for the raw (distorted) images.
-  #     [fx  0 cx]
-  # K = [ 0 fy cy]
-  #     [ 0  0  1]
-  # Projects 3D points in the camera coordinate frame to 2D pixel
-  # coordinates using the focal lengths (fx, fy) and principal point
-  # (cx, cy).
-  #float64[9]  K # 3x3 row-major matrix
-
   #generate camera info msg
   info_msg = CameraInfo()
   info_msg.header.frame_id = '/world'
@@ -211,56 +195,22 @@ def pose_to_rosmsg(extrinsic, intrinsic, h, w):
 
   return info_msg, odom_msg
 
+def report_missing(colorimg_dict, labelimg_dict,  depthimg_dict, poses, cameras):
+  for camera in cameras:
+    if camera not in colorimg_dict.keys():
+      print('Missing color image for camera {}', camera)
 
+    if camera not in labelimg_dict.keys():
+      print('Missing label image for camera {}', camera)
 
-def visualize_monocular_3d(camera_pose, semantic_image, depth_image, intrinsic):
-  #use camera pose (R_w_c, T_w_c) to obtain the 3d semantics in the world frame
-  #semantic image and depth image should be of the same size
-  h, w, c = semantic_image.shape
-  P_w_c = camera_pose
+    if camera not in depthimg_dict.keys():
+      print('Missing depth image for camera {}', camera)
 
-  fig = plt.figure()
-  ax = plt.axes(projection='3d')
-  
-  xs = []
-  ys = []
-  zs = []
-
-  print ('start proces one image')
-  for v in range(h):
-    for u in range(w):
-      # pixel_id = semantic_image[u, v, 0]
-      # if pixel_id not in id2label.keys():
-      #   pixel_id = 255
-
-      # #calculate colorcode for this label
-      # label = id2label[pixel_id]
-      # colorcode = label.color
-      # r = colorcode // (256*256)
-      # g = (colorcode-256*256*r) // 256
-      # b = (colorcode-256*256*r-256*g)
-      
-      #based on the camera pose and depth image, project this pixel to world coordinate
-      P_c = np.zeros((4,1), dtype = np.float)
-      depth = depth_image[v, u]/200.
-      P_c[0] = (u-intrinsic['cx']) * depth/intrinsic['fx']
-      P_c[1] = (v-intrinsic['cy']) * depth/intrinsic['fy']
-      P_c[2] = depth
-      P_c[3] = 1.
-
-      P_w = np.matmul(P_w_c, P_c)
-
-      xs.append(P_w[0])
-      ys.append(P_w[1])
-      zs.append(P_w[2])
-      print (P_w)
-
-  print ('finish processing one image')
-
-  ax.scatter3D(xs, ys, zs)
-  plt.show()
+    if camera not in poses.keys():
+      print('Missing pose for camera {}', camera)
 
 if __name__ == "__main__":    
+
   dataset_dir = '/media/denny/storage/dataset/apolloscape/'
   scene       = 'road01'
   level       = 'ins'
@@ -270,7 +220,7 @@ if __name__ == "__main__":
   max_record_id = 100
 
   camera_intrisics = {cameras[0]: {'fx': 2304.54786556982, 'fy': 2305.875668062, 'cx':1686.23787612802, 'cy':1354.98486439791 } ,
-                      cameras[1]: {'fx': 2304.54786556982, 'fy': 2305.875668062, 'cx':1686.23787612802, 'cy':1354.98486439791 } }
+                      cameras[1]: {'fx': 2300.39065314361, 'fy': 2301.31478860597, 'cx':1713.21615190657, 'cy':1342.91100799715 } }
 
   print ('==================================================')
   print ('reading dataset from dir: ', dataset_dir)
@@ -323,18 +273,17 @@ if __name__ == "__main__":
     print ('>>>>>> Current record: ', record_id)
     record_string = 'Record' + '{0:03}'.format(record_id)
 
-    #use arbitrary camera name to get all the colorimg_names
-    colorimg_dir = dataset_dir + scene + '_' + level + '_depth/' + record_string + cameras[0]
-    colorimg_names = get_filenames_from_dir(colorimg_dir)
-    
-    if len(colorimg_names) == 0:    
-      colorimg_dir = dataset_dir + scene + '_' + level + '_depth/' + record_string + cameras[1]
-      colorimg_names = get_filenames_from_dir(colorimg_dir)
+    #scan the depth folder to get all the file names, depth is the most incomplete
+    for camera in cameras:
+      img_dir = dataset_dir + scene + '_' + level + '_depth/' + record_string + camera
+      img_names = get_filenames_from_dir(img_dir)
+      if len(img_names) != 0:
+        break    
 
     #collect all the records names
     records_list = []
-    for colorimg_name in colorimg_names:
-      recordname   = os.path.splitext(os.path.basename(colorimg_name))[0]
+    for img_name in img_names:
+      recordname   = os.path.splitext(os.path.basename(img_name))[0]
       records_list.append(recordname) 
 
     #get pose records
@@ -346,14 +295,13 @@ if __name__ == "__main__":
       pose_df = pd.read_csv(poses_name, delimiter =' ', header = None, names=['r00', 'r01', 'r02', 't0', 'r10', 'r11', 'r12', 't1', 'r20', 'r21', 'r22', 't2', 'p40', 'p41', 'p42', 'p43', 'image_name'])
       pose_df.set_index('image_name')
       pose_dfs[camera] = pose_df
-
     print('Finish reading all the poses for this record, # of pose files', len(pose_dfs.keys()) )
+
 
     #iterate through records
     for recordname in records_list:
       img_list = []
-
-      print (recordname)
+      print ('Scanning record (including all the cameras)', recordname)
 
       #read color image
       colorprefix = dataset_dir + scene + '_' + level + '/ColorImage/' + record_string
@@ -363,7 +311,6 @@ if __name__ == "__main__":
       #read labels 
       labelprefix = dataset_dir + scene + '_' + level + '/Label/' + record_string
       labelimg_dict = read_image(recordname, labelprefix,  '.png', cameras)
-
       if len(labelimg_dict.keys()) == 0:
         labelimg_dict = read_image(recordname, labelprefix,  '_bin.png', cameras)
       elif len(labelimg_dict.keys()) < len(cameras):
@@ -385,13 +332,6 @@ if __name__ == "__main__":
 
         if pose is not None:
           poses[camera] = pose
-
-      #do 3d visualization
-      # for camera in [cameras[0]]:
-      #   if camera in depthimg_list.keys() and camera in labelimg_dict.keys() and camera in poses.keys():
-      #     visualize_monocular_3d(poses[camera], labelimg_dict[camera], depthimg_dict[camera], camera_intrisics[camera])
-      #   else:
-      #     print('Information missing, cannot output 3d projections')
 
       #if record is complete, add to the current bag file
       write_valid = False
@@ -458,43 +398,20 @@ if __name__ == "__main__":
             #   bag.close()
             #   bag, bag_index_this_record = record_next_bag(scene, level, record_id, bag_index_this_record)
             #   last_write_stamp = None
-
           else:
-            for camera in cameras:
-              if camera not in colorimg_dict.keys():
-                print('Missing color image for camera {}', camera)
-
-              if camera not in labelimg_dict.keys():
-                print('Missing label image for camera {}', camera)
-
-              if camera not in depthimg_dict.keys():
-                print('Missing depth image for camera {}', camera)
-
-              if camera not in poses.keys():
-                print('Missing pose for camera {}', camera)
-
+            report_missing(colorimg_dict, labelimg_dict,  depthimg_dict, poses, [camera])
 
       else:
         #if write not valid, check whether next bag has been ticked
         print ('------------------>No valid record found <--------------')
-        if camera not in colorimg_dict.keys():
-          print('Missing color image for camera {}', camera)
+        report_missing(colorimg_dict, labelimg_dict,  depthimg_dict, poses, cameras)
 
-        if camera not in labelimg_dict.keys():
-          print('Missing label image for camera {}', camera)
-
-        if camera not in depthimg_dict.keys():
-          print('Missing depth image for camera {}', camera)
-
-        if camera not in poses.keys():
-          print('Missing pose for camera {}', camera)
-
-
+        #if found record missing in the middle, start a new bag file
         if bag_ticked == False:
           #move to next bag
           bag.close()
           bag, bag_index_this_record = record_next_bag(scene, level, record_id, bag_index_this_record)
-          bag_ticked = True
+          bag_ticked        = True
           last_write_stamp  = None
 
       #resize and visualize
