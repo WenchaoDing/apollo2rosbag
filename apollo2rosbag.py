@@ -212,7 +212,7 @@ def report_missing(colorimg_dict, labelimg_dict,  depthimg_dict, poses, cameras)
 if __name__ == "__main__":    
 
   dataset_dir = '/media/denny/storage/dataset/apolloscape/'
-  scene       = 'road01'
+  scene       = 'road02'
   level       = 'ins'
   #cameras     = ['/Camera 5/'] 
   cameras     = ['/Camera 5/', '/Camera 6/'] 
@@ -324,6 +324,10 @@ if __name__ == "__main__":
       depthprefix = dataset_dir + scene + '_' + level + '_depth/' + record_string
       depthimg_dict = read_image(recordname, depthprefix, '.png', cameras, flags = cv2.IMREAD_GRAYSCALE)
 
+      #read instance
+      insprefix   = dataset_dir + scene + '_' + level + '/Label/' + record_string
+      insimg_dict = read_image(recordname, insprefix, '_instanceIds.png', cameras)
+
       #read pose
       poses = {}
       for camera in cameras:
@@ -376,6 +380,14 @@ if __name__ == "__main__":
             depthmsg = bridge.cv2_to_imgmsg(depthimg_dict[camera], encoding="mono8")            
             depthmsg.header.stamp    = stamp
             depthmsg.header.frame_id = topicname
+            #get instance 
+
+            if camera in insimg_dict.keys():
+              insmsg = bridge.cv2_to_imgmsg(insimg_dict[camera], encoding="bgr8")            
+              insmsg.header.stamp    = stamp
+              insmsg.header.frame_id = topicname
+              bag.write(topicname + 'instance/', insmsg, stamp)
+              #print ('putting in instance')
 
             #get camera info and odom msg
             h, w = depthimg_dict[camera].shape
