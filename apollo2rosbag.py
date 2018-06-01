@@ -431,15 +431,19 @@ if __name__ == "__main__":
             vis_img = np.concatenate((vis_img, resized), axis=1)
           else:
             vis_img = resized
-      
-      cv2.imshow('all in one', vis_img)
-      k = cv2.waitKey(1)
+      try:
+        cv2.imshow('all in one', vis_img)
+        k = cv2.waitKey(1)
+      except KeyboardInterrupt:      
+        user_interupt = True
+        bag.close()
+        break
 
       if k == 27:
         user_interupt = True
         break
 
+    print ('closing the bag.')
     bag.close()
-
     if user_interupt:
       break
